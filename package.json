@@ -1,0 +1,28 @@
+{
+    "name": "azure-key-env",
+    "version": "0.1.0",
+    "description": "Azure credential and Key Vault utilities with CLI and ESM support.",
+    "type": "module",
+    "main": "index.mjs",
+    "bin": {
+        "azure-key-env": "./cli.mjs"
+    },
+    "scripts": {
+        "start": "node cli.mjs"
+    },
+    "keywords": [
+        "azure",
+        "keyvault",
+        "env",
+        "cli"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "@azure/identity": "^4.11.1",
+        "@azure/keyvault-secrets": "^4.10.0",
+        "@microsoft/microsoft-graph-client": "^3.0.7",
+        "inquirer": "^12.9.4",
+        "isomorphic-fetch": "^3.0.0"
+    }
+}

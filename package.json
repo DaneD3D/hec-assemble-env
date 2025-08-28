@@ -1,6 +1,6 @@
 {
     "name": "azure-key-env",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Azure credential and Key Vault utilities with CLI and ESM support.",
     "type": "module",
     "main": "index.mjs",

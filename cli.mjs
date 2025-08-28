@@ -13,8 +13,6 @@ if (configArg) {
   options = JSON.parse(configData);
 }
 
-console.log('Using options:', options);
-
 (async () => {
   const email = await getCurrentUserEmail();
   console.log('Current user email:', email);

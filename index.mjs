@@ -1,3 +1,10 @@
+import { DefaultAzureCredential } from '@azure/identity';
+import { SecretClient } from '@azure/keyvault-secrets';
+import { Client } from '@microsoft/microsoft-graph-client';
+import inquirer from 'inquirer';
+import fs from 'fs';
+import 'isomorphic-fetch';
+
 /**
  * Shared logic for env file creation and modification
  */
@@ -10,33 +17,38 @@ async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEva
   let updatedEnv = { ...currentEnv };
   let groupedKeys = new Set();
   let answers = {};
-  // Build a list of queries (groups and individuals)
-  let queries = [];
-  let propertyKeys = Object.keys(config.PROPERTIES || {});
-  let groupNames = config.GROUPINGS ? Object.keys(config.GROUPINGS) : [];
-  let allGroupedKeys = new Set();
-  if (config.GROUPINGS) {
-    for (const groupName of groupNames) {
-      const groupObj = config.GROUPINGS[groupName];
-      queries.push({ type: 'group', name: groupName, keys: groupObj.KEYS, values: groupObj.VALUES });
-      for (const key of groupObj.KEYS) {
-        allGroupedKeys.add(key);
+  // Modular: build queries
+  function buildQueries(config) {
+    const queries = [];
+    const propertyKeys = Object.keys(config.PROPERTIES || {});
+    const groupNames = config.GROUPINGS ? Object.keys(config.GROUPINGS) : [];
+    const allGroupedKeys = new Set();
+    if (config.GROUPINGS) {
+      for (const groupName of groupNames) {
+        const groupObj = config.GROUPINGS[groupName];
+        queries.push({ type: 'group', name: groupName, keys: groupObj.KEYS, values: groupObj.VALUES });
+        for (const key of groupObj.KEYS) {
+          allGroupedKeys.add(key);
+        }
       }
     }
-  }
-  // Add ungrouped keys
-  for (const key of propertyKeys) {
-    if (!allGroupedKeys.has(key) && !(Array.isArray(config.PROPERTIES[key]) && config.PROPERTIES[key].length === 0)) {
-      queries.push({ type: 'individual', name: key });
+    for (const key of propertyKeys) {
+      if (!allGroupedKeys.has(key) && !(Array.isArray(config.PROPERTIES[key]) && config.PROPERTIES[key].length === 0)) {
+        queries.push({ type: 'individual', name: key });
+      }
     }
+    return queries;
   }
-  // Build choices for the multi-select prompt
-  let updateChoices = queries.map(q => q.type === 'group'
-    ? { name: `[GROUP] ${q.name}`, value: `GROUP:${q.name}` }
-    : { name: q.name, value: q.name });
+  let queries = buildQueries(config);
+  // Modular: build choices for multi-select
+  function buildUpdateChoices(queries) {
+    return queries.map(q => q.type === 'group'
+      ? { name: `[GROUP] ${q.name}`, value: `GROUP:${q.name}` }
+      : { name: q.name, value: q.name });
+  }
+  let updateChoices = buildUpdateChoices(queries);
   let keysToUpdate = [];
   if (!skipEvaluation && Object.keys(currentEnv).length > 0) {
-    // Interactive update: let user select which queries to run
     if (updateChoices.length === 0) {
       keysToUpdate = [];
     } else {
@@ -51,55 +63,59 @@ async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEva
       keysToUpdate = promptRes.keysToUpdate;
     }
   } else {
-    // Full recreation: run all queries
     keysToUpdate = updateChoices.map(c => c.value);
   }
-  // Now run through the selected queries
+  // Modular: prompt for values
+  async function promptForValue(item, queries, currentEnv, config) {
+    if (item.startsWith('GROUP:')) {
+      const groupName = item.replace('GROUP:', '');
+      const groupQuery = queries.find(q => q.type === 'group' && q.name === groupName);
+      if (!groupQuery) return {};
+      const { groupValue } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'groupValue',
+          message: `Choose value for group ${groupName}:`,
+          choices: groupQuery.values,
+          default: currentEnv[groupQuery.keys[0]]
+        }
+      ]);
+      const result = {};
+      for (const key of groupQuery.keys) {
+        result[key] = groupValue;
+      }
+      return result;
+    } else {
+      let promptOptions = {
+        type: 'input',
+        name: 'newValue',
+        message: `Enter new value for ${item}:`,
+        default: currentEnv[item]
+      };
+      if (config.PROPERTIES && Array.isArray(config.PROPERTIES[item])) {
+        promptOptions = {
+          type: 'list',
+          name: 'newValue',
+          message: `Choose new value for ${item}:`,
+          choices: config.PROPERTIES[item],
+          default: currentEnv[item]
+        };
+      }
+      const { newValue } = await inquirer.prompt([promptOptions]);
+      return { [item]: newValue };
+    }
+  }
+  // Run through selected queries
   if (keysToUpdate.length === 0) {
     // nothing to update
   } else {
-    for (let i = 0; i < keysToUpdate.length; i++) {
-      const item = keysToUpdate[i];
-      if (item.startsWith('GROUP:')) {
-        const groupName = item.replace('GROUP:', '');
-        const groupQuery = queries.find(q => q.type === 'group' && q.name === groupName);
-        if (!groupQuery) continue;
-        const { groupValue } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'groupValue',
-            message: `Choose value for group ${groupName}:`,
-            choices: groupQuery.values,
-            default: currentEnv[groupQuery.keys[0]]
-          }
-        ]);
-        for (const key of groupQuery.keys) {
-          updatedEnv[key] = groupValue;
-          answers[key] = groupValue;
-          groupedKeys.add(key);
-        }
-      } else {
-        // Individual key query
-        let promptOptions = {
-          type: 'input',
-          name: 'newValue',
-          message: `Enter new value for ${item}:`,
-          default: currentEnv[item]
-        };
-        if (config.PROPERTIES && Array.isArray(config.PROPERTIES[item])) {
-          promptOptions = {
-            type: 'list',
-            name: 'newValue',
-            message: `Choose new value for ${item}:`,
-            choices: config.PROPERTIES[item],
-            default: currentEnv[item]
-          };
-        }
-        const { newValue } = await inquirer.prompt([promptOptions]);
-        updatedEnv[item] = newValue;
-        answers[item] = newValue;
+    for (const item of keysToUpdate) {
+      const result = await promptForValue(item, queries, currentEnv, config);
+      for (const [key, value] of Object.entries(result)) {
+        updatedEnv[key] = value;
+        answers[key] = value;
+        if (item.startsWith('GROUP:')) groupedKeys.add(key);
       }
-      // ...no need to reprint instructions after each prompt...
     }
   }
   // Write updated env file
@@ -161,12 +177,6 @@ export async function updateEnvFileInteractively(envFilePath) {
   }
   await promptAndWriteEnv({ config, envFilePath, currentEnv, skipEvaluation: false });
 }
-import { DefaultAzureCredential } from '@azure/identity';
-import { SecretClient } from '@azure/keyvault-secrets';
-import { Client } from '@microsoft/microsoft-graph-client';
-import inquirer from 'inquirer';
-import fs from 'fs';
-import 'isomorphic-fetch';
 
 export function getAzureCredentials() {
   return new DefaultAzureCredential();

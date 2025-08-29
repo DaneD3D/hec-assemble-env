@@ -2,7 +2,7 @@ import { SecretClient } from '@azure/keyvault-secrets';
 
 /**
  * Utility to normalize and format secret names for Key Vault lookup
- * Example: ADMIN_COMMERCE_API_CLIENT_ID=002 -> ADMIN-COMMERCE-API-CLIENT-ID-002
+ * Example: EXAMPLE_CLIENT_ID=A -> EXAMPLE-CLIENT-ID-A
  */
 export function buildSecretName(key, value) {
   // Replace underscores with dashes, preserve case, append value if present

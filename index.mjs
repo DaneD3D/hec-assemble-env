@@ -1,3 +1,4 @@
+export { getCurrentUserEmail, promptKeyVaultSecretsAndWriteEnv, updateEnvFileInteractively };
 import { DefaultAzureCredential } from '@azure/identity';
 import { SecretClient } from '@azure/keyvault-secrets';
 import { Client } from '@microsoft/microsoft-graph-client';

@@ -16,8 +16,30 @@ async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEva
   try {
     validateConfig(config);
   } catch (err) {
-    console.error(`\u001b[31mConfig validation error: ${err.message}\u001b[0m`);
-    throw err;
+    if (err.message === 'Config missing PROPERTIES object.') {
+      // Fallback: prompt for vault secrets dynamically
+      const vaultUrl = config.AZURE_SERVER;
+      const credential = getAzureCredentials();
+      // Prefer group-aware prompt if available
+      let answers;
+      try {
+        const { promptForVaultSecretsWithGroups } = await import('./vaultPromptGroupsUtils.mjs');
+        answers = await promptForVaultSecretsWithGroups({ vaultUrl, credential });
+      } catch {
+        const { promptForVaultSecrets } = await import('./vaultPromptUtils.mjs');
+        answers = await promptForVaultSecrets({ vaultUrl, credential });
+      }
+      let envContent = '';
+      for (const [key, value] of Object.entries(answers)) {
+        envContent += `${key}=${value}\n`;
+      }
+      await fsp.writeFile(envFilePath, envContent);
+      console.log(`${envFilePath} created from Key Vault secrets.`);
+      return;
+    } else {
+      console.error(`\u001b[31mConfig validation error: ${err.message}\u001b[0m`);
+      throw err;
+    }
   }
   const keys = Object.keys(currentEnv).length > 0 ? Object.keys(currentEnv) : Object.keys(config.PROPERTIES || {});
   let updatedEnv = { ...currentEnv };

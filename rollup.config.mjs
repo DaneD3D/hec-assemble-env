@@ -6,11 +6,10 @@ import json from '@rollup/plugin-json';
 export default {
   input: 'index.mjs',
   output: {
-    dir: 'dist',
+    file: 'dist/index.mjs',
     format: 'esm',
     sourcemap: true,
-    inlineDynamicImports: true,
-    entryFileNames: 'index.mjs'
+    inlineDynamicImports: true
   },
   plugins: [
     nodeResolve(),
@@ -21,5 +20,4 @@ export default {
   external: [
     'fs', 'path', 'os', 'process', 'child_process'
   ],
-  preserveEntrySignatures: false,
 };

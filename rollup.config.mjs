@@ -9,7 +9,8 @@ export default {
     dir: 'dist',
     format: 'esm',
     sourcemap: true,
-    inlineDynamicImports: true
+    inlineDynamicImports: true,
+    entryFileNames: 'index.mjs'
   },
   plugins: [
     nodeResolve(),
@@ -19,5 +20,6 @@ export default {
   ],
   external: [
     'fs', 'path', 'os', 'process', 'child_process'
-  ]
+  ],
+  preserveEntrySignatures: false,
 };

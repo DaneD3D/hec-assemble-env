@@ -70,7 +70,7 @@ async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEva
     throw new Error('No Key Vault URL provided.');
   }
   const credential = getAzureCredentials();
-  const secrets = await fetchSecretsFromVault({ answers, vaultUrl, credential });
+  const secrets = await fetchSecretsFromVault({ answers, vaultUrl, credential, config });
   let envContent = '';
   // Get all keys from config.PROPERTIES (ensures all keys are present)
   const allConfigKeys = Object.keys(config.PROPERTIES || {});

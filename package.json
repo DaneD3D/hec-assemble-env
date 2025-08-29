@@ -11,6 +11,9 @@
         "start": "node cli.mjs",
         "build": "rollup -c"
     },
+    "files": [
+        "dist"
+    ],
     "keywords": [
         "azure",
         "keyvault",

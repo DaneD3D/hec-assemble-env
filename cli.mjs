@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import path from 'path';
-import { getCurrentUserEmail, promptKeyVaultSecretsAndWriteEnv, updateEnvFileInteractively } from './index.mjs';
+import { getCurrentUserEmail, promptKeyVaultSecretsAndWriteEnv, updateEnvFileInteractively } from './dist/index.mjs';
 
 const args = process.argv.slice(2);
 let options = {};

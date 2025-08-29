@@ -3,114 +3,57 @@ import { SecretClient } from '@azure/keyvault-secrets';
 import { Client } from '@microsoft/microsoft-graph-client';
 import inquirer from 'inquirer';
 import fs from 'fs';
+const fsp = fs.promises;
 import 'isomorphic-fetch';
+import { validateConfig, buildQueries, buildUpdateChoices, promptForValue } from './promptUtils.mjs';
 
 /**
  * Shared logic for env file creation and modification
  */
 async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEvaluation = false }) {
-  // Normalize keys for matching
-  function normalizeKey(key) {
-    return key.trim().toUpperCase();
+  // Validate config structure
+  try {
+    validateConfig(config);
+  } catch (err) {
+    console.error(`\u001b[31mConfig validation error: ${err.message}\u001b[0m`);
+    throw err;
   }
   const keys = Object.keys(currentEnv).length > 0 ? Object.keys(currentEnv) : Object.keys(config.PROPERTIES || {});
   let updatedEnv = { ...currentEnv };
   let groupedKeys = new Set();
   let answers = {};
-  // Modular: build queries
-  function buildQueries(config) {
-    const queries = [];
-    const propertyKeys = Object.keys(config.PROPERTIES || {});
-    const groupNames = config.GROUPINGS ? Object.keys(config.GROUPINGS) : [];
-    const allGroupedKeys = new Set();
-    if (config.GROUPINGS) {
-      for (const groupName of groupNames) {
-        const groupObj = config.GROUPINGS[groupName];
-        queries.push({ type: 'group', name: groupName, keys: groupObj.KEYS, values: groupObj.VALUES });
-        for (const key of groupObj.KEYS) {
-          allGroupedKeys.add(key);
-        }
-      }
-    }
-    for (const key of propertyKeys) {
-      if (!allGroupedKeys.has(key) && !(Array.isArray(config.PROPERTIES[key]) && config.PROPERTIES[key].length === 0)) {
-        queries.push({ type: 'individual', name: key });
-      }
-    }
-    return queries;
-  }
-  let queries = buildQueries(config);
-  // Modular: build choices for multi-select
-  function buildUpdateChoices(queries) {
-    return queries.map(q => q.type === 'group'
-      ? { name: `[GROUP] ${q.name}`, value: `GROUP:${q.name}` }
-      : { name: q.name, value: q.name });
-  }
-  let updateChoices = buildUpdateChoices(queries);
+  let queriesMap = buildQueries(config);
+  let queries = Array.from(queriesMap.values());
+  let updateChoices = buildUpdateChoices(queriesMap);
   let keysToUpdate = [];
   if (!skipEvaluation && Object.keys(currentEnv).length > 0) {
     if (updateChoices.length === 0) {
       keysToUpdate = [];
     } else {
-      const promptRes = await inquirer.prompt([
-        {
-          type: 'checkbox',
-          name: 'keysToUpdate',
-          message: 'Select groups/keys to update:',
-          choices: updateChoices
-        }
-      ]);
-      keysToUpdate = promptRes.keysToUpdate;
+      try {
+        const promptRes = await inquirer.prompt([
+          {
+            type: 'checkbox',
+            name: 'keysToUpdate',
+            message: 'Select groups/keys to update:',
+            choices: updateChoices
+          }
+        ]);
+        keysToUpdate = promptRes.keysToUpdate;
+      } catch (err) {
+        console.error(`\u001b[31mPrompt error: ${err.message}\u001b[0m`);
+        throw err;
+      }
     }
   } else {
     keysToUpdate = updateChoices.map(c => c.value);
-  }
-  // Modular: prompt for values
-  async function promptForValue(item, queries, currentEnv, config) {
-    if (item.startsWith('GROUP:')) {
-      const groupName = item.replace('GROUP:', '');
-      const groupQuery = queries.find(q => q.type === 'group' && q.name === groupName);
-      if (!groupQuery) return {};
-      const { groupValue } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'groupValue',
-          message: `Choose value for group ${groupName}:`,
-          choices: groupQuery.values,
-          default: currentEnv[groupQuery.keys[0]]
-        }
-      ]);
-      const result = {};
-      for (const key of groupQuery.keys) {
-        result[key] = groupValue;
-      }
-      return result;
-    } else {
-      let promptOptions = {
-        type: 'input',
-        name: 'newValue',
-        message: `Enter new value for ${item}:`,
-        default: currentEnv[item]
-      };
-      if (config.PROPERTIES && Array.isArray(config.PROPERTIES[item])) {
-        promptOptions = {
-          type: 'list',
-          name: 'newValue',
-          message: `Choose new value for ${item}:`,
-          choices: config.PROPERTIES[item],
-          default: currentEnv[item]
-        };
-      }
-      const { newValue } = await inquirer.prompt([promptOptions]);
-      return { [item]: newValue };
-    }
   }
   // Run through selected queries
   if (keysToUpdate.length === 0) {
     // nothing to update
   } else {
     for (const item of keysToUpdate) {
-      const result = await promptForValue(item, queries, currentEnv, config);
+      const result = await promptForValue(item, queriesMap, currentEnv, config);
       for (const [key, value] of Object.entries(result)) {
         updatedEnv[key] = value;
         answers[key] = value;
@@ -139,38 +82,57 @@ async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEva
       }
     }
   }
-  fs.writeFileSync(envFilePath, envContent);
-  console.log(`${envFilePath} updated with selected changes.`);
+  try {
+    await fsp.writeFile(envFilePath, envContent);
+    console.log(`${envFilePath} updated with selected changes.`);
+  } catch (err) {
+    console.error(`\u001b[31mFailed to write env file: ${err.message}\u001b[0m`);
+    throw err;
+  }
 }
 /**
  * Reads and parses a .env file into an object
  */
-function readEnvFile(envFilePath) {
-  if (!fs.existsSync(envFilePath)) return {};
-  const content = fs.readFileSync(envFilePath, 'utf-8');
-  const lines = content.split(/\r?\n/);
-  const env = {};
-  for (const line of lines) {
-    if (!line.trim() || line.trim().startsWith('#')) continue;
-    const [key, ...rest] = line.split('=');
-    env[key.trim()] = rest.join('=').trim();
+async function readEnvFile(envFilePath) {
+  try {
+    await fsp.access(envFilePath);
+  } catch {
+    return {};
   }
-  return env;
+  try {
+    const content = await fsp.readFile(envFilePath, 'utf-8');
+    const lines = content.split(/\r?\n/);
+    const env = {};
+    for (const line of lines) {
+      if (!line.trim() || line.trim().startsWith('#')) continue;
+      const [key, ...rest] = line.split('=');
+      env[key.trim()] = rest.join('=').trim();
+    }
+    return env;
+  } catch (err) {
+    console.error(`\u001b[31mFailed to read env file: ${err.message}\u001b[0m`);
+    return {};
+  }
 }
 
 /**
  * Allows user to select which env keys to update, and prompts for new values
  */
 export async function updateEnvFileInteractively(envFilePath) {
-  const currentEnv = readEnvFile(envFilePath);
+  let currentEnv = {};
   let config = {};
   try {
+    currentEnv = await readEnvFile(envFilePath);
     const configPath = process.argv.find(arg => arg.startsWith('--config='));
     if (configPath) {
       const configFile = configPath.split('=')[1];
-      config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
+      const configContent = await fsp.readFile(configFile, 'utf-8');
+      config = JSON.parse(configContent);
     }
-  } catch {}
+  } catch (err) {
+    console.error(`\u001b[31mError loading config or env: ${err.message}\u001b[0m`);
+    throw err;
+  }
   if (Object.keys(currentEnv).length === 0) {
     console.log('No existing values found in env file.');
     return;
@@ -212,8 +174,13 @@ export async function promptKeyVaultSecretsAndWriteEnv(options = {}) {
         envContent += `${key}=${value}\n`;
       }
     }
-    fs.writeFileSync(envFile, envContent);
-    console.log(`${envFile} file created with values from config.`);
+    try {
+      await fsp.writeFile(envFile, envContent);
+      console.log(`${envFile} file created with values from config.`);
+    } catch (err) {
+      console.error(`\u001b[31mFailed to write env file: ${err.message}\u001b[0m`);
+      throw err;
+    }
     return;
   }
 
@@ -231,18 +198,29 @@ export async function promptKeyVaultSecretsAndWriteEnv(options = {}) {
       if (input.choices && input.choices.length > 0) {
         promptType = input.key === 'secrets' ? 'checkbox' : 'list';
       }
-      const response = await inquirer.prompt([
-        {
-          type: promptType,
-          name: input.key,
-          message: `Choose ${input.key}:`,
-          choices: input.choices
-        }
-      ]);
-      answers[input.key] = response[input.key];
+      try {
+        const response = await inquirer.prompt([
+          {
+            type: promptType,
+            name: input.key,
+            message: `Choose ${input.key}:`,
+            choices: input.choices
+          }
+        ]);
+        answers[input.key] = response[input.key];
+      } catch (err) {
+        console.error(`\u001b[31mPrompt error: ${err.message}\u001b[0m`);
+        throw err;
+      }
     }
 
     const credential = getAzureCredentials();
+    // vaultUrl must be defined in options or config
+    const vaultUrl = options.vaultUrl || config.AZURE_SERVER;
+    if (!vaultUrl) {
+      console.error(`\u001b[31mNo Key Vault URL provided.\u001b[0m`);
+      throw new Error('No Key Vault URL provided.');
+    }
     const client = new SecretClient(vaultUrl, credential);
     for (const input of KEY_VAULT_INPUTS) {
       if (input.key !== 'secrets') {
@@ -257,7 +235,12 @@ export async function promptKeyVaultSecretsAndWriteEnv(options = {}) {
         console.error(`Failed to fetch secret '${name}':`, err.message);
       }
     }
-    fs.writeFileSync(envFile, envContent);
-    console.log(`${envFile} file created with retrieved secrets.`);
+    try {
+      await fsp.writeFile(envFile, envContent);
+      console.log(`${envFile} file created with retrieved secrets.`);
+    } catch (err) {
+      console.error(`\u001b[31mFailed to write env file: ${err.message}\u001b[0m`);
+      throw err;
+    }
   }
 }

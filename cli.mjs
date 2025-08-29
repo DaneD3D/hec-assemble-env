@@ -18,8 +18,7 @@ const envFile = options.FILE_OUTPUT_NAME || options.envFile || '.env';
 const recreateFlag = args.includes('-c');
 
 (async () => {
-  const email = await getCurrentUserEmail();
-  console.log('Current user email:', email);
+  await getCurrentUserEmail();
   if (recreateFlag) {
     await promptKeyVaultSecretsAndWriteEnv(options);
   } else {

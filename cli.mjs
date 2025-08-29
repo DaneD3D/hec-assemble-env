@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import path from 'path';
-import { getCurrentUserEmail, promptKeyVaultSecretsAndWriteEnv } from './index.mjs';
+import { getCurrentUserEmail, promptKeyVaultSecretsAndWriteEnv, updateEnvFileInteractively } from './index.mjs';
 
 const args = process.argv.slice(2);
 let options = {};
@@ -13,8 +13,16 @@ if (configArg) {
   options = JSON.parse(configData);
 }
 
+
+const envFile = options.FILE_OUTPUT_NAME || options.envFile || '.env';
+const recreateFlag = args.includes('-c');
+
 (async () => {
   const email = await getCurrentUserEmail();
   console.log('Current user email:', email);
-  await promptKeyVaultSecretsAndWriteEnv(options);
+  if (recreateFlag) {
+    await promptKeyVaultSecretsAndWriteEnv(options);
+  } else {
+    await updateEnvFileInteractively(envFile);
+  }
 })();

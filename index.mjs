@@ -1,3 +1,76 @@
+/**
+ * Reads and parses a .env file into an object
+ */
+function readEnvFile(envFilePath) {
+  if (!fs.existsSync(envFilePath)) return {};
+  const content = fs.readFileSync(envFilePath, 'utf-8');
+  const lines = content.split(/\r?\n/);
+  const env = {};
+  for (const line of lines) {
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const [key, ...rest] = line.split('=');
+    env[key.trim()] = rest.join('=').trim();
+  }
+  return env;
+}
+
+/**
+ * Allows user to select which env keys to update, and prompts for new values
+ */
+export async function updateEnvFileInteractively(envFilePath) {
+  const currentEnv = readEnvFile(envFilePath);
+  const keys = Object.keys(currentEnv);
+  if (keys.length === 0) {
+    console.log('No existing values found in env file.');
+    return;
+  }
+  // Multi-select prompt for keys to update
+  const { keysToUpdate } = await inquirer.prompt([
+    {
+      type: 'checkbox',
+      name: 'keysToUpdate',
+      message: 'Select env keys to update (spacebar to select, arrows to move):',
+      choices: keys
+    }
+  ]);
+  let updatedEnv = { ...currentEnv };
+  // Try to load config for enums
+  let config = {};
+  try {
+    // Try to find config file in cwd
+    const configPath = process.argv.find(arg => arg.startsWith('--config='));
+    if (configPath) {
+      const configFile = configPath.split('=')[1];
+      config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
+    }
+  } catch {}
+  for (const key of keysToUpdate) {
+    let promptOptions = {
+      type: 'input',
+      name: 'newValue',
+      message: `Enter new value for ${key}:`,
+      default: currentEnv[key]
+    };
+    if (config.PROPERTIES && Array.isArray(config.PROPERTIES[key])) {
+      promptOptions = {
+        type: 'list',
+        name: 'newValue',
+        message: `Choose new value for ${key}:`,
+        choices: config.PROPERTIES[key],
+        default: currentEnv[key]
+      };
+    }
+    const { newValue } = await inquirer.prompt([promptOptions]);
+    updatedEnv[key] = newValue;
+  }
+  // Write updated env file
+  let envContent = '';
+  for (const [key, value] of Object.entries(updatedEnv)) {
+    envContent += `${key}=${value}\n`;
+  }
+  fs.writeFileSync(envFilePath, envContent);
+  console.log(`${envFilePath} updated with selected changes.`);
+}
 import { DefaultAzureCredential } from '@azure/identity';
 import { SecretClient } from '@azure/keyvault-secrets';
 import { Client } from '@microsoft/microsoft-graph-client';
@@ -57,6 +130,9 @@ export async function promptKeyVaultSecretsAndWriteEnv(options = {}) {
     let answers = {};
     for (const [key, value] of Object.entries(options.PROPERTIES)) {
       if (Array.isArray(value)) {
+        if (value.length === 0) {
+          continue;
+        }
         // Prompt user to select from array
         const response = await inquirer.prompt([
           {

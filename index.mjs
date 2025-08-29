@@ -6,6 +6,7 @@ import fs from 'fs';
 const fsp = fs.promises;
 import 'isomorphic-fetch';
 import { validateConfig, buildQueries, buildUpdateChoices, promptForValue } from './promptUtils.mjs';
+import { fetchSecretsFromVault } from './vaultQueryUtils.mjs';
 
 /**
  * Shared logic for env file creation and modification
@@ -48,7 +49,7 @@ async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEva
   } else {
     keysToUpdate = updateChoices.map(c => c.value);
   }
-  // Run through selected queries
+  // Run through selected queries and collect answers
   if (keysToUpdate.length === 0) {
     // nothing to update
   } else {
@@ -61,30 +62,30 @@ async function promptAndWriteEnv({ config, envFilePath, currentEnv = {}, skipEva
       }
     }
   }
-  // Write updated env file
-  let envContent = '';
-  for (const key of keys) {
-    // Always export the value set by groupings if present
-    if (groupedKeys.has(key)) {
-      envContent += `${key}=${updatedEnv[key]}\n`;
-      continue;
-    }
-    // Otherwise, export the updated value (if set), or keep the current value
-    envContent += `${key}=${updatedEnv[key] ?? currentEnv[key] ?? ''}\n`;
+
+  // Query Azure Key Vault for each key/value pair using vaultQueryUtils
+  let vaultUrl = config.AZURE_SERVER;
+  if (!vaultUrl) {
+    console.error(`\u001b[31mNo Key Vault URL provided in config (AZURE_SERVER).\u001b[0m`);
+    throw new Error('No Key Vault URL provided.');
   }
-  // Also write any grouped keys not in keys
-  if (config.GROUPINGS) {
-    for (const groupObj of Object.values(config.GROUPINGS)) {
-      for (const key of groupObj.KEYS) {
-        if (!keys.includes(key)) {
-          envContent += `${key}=${answers[key] ?? ''}\n`;
-        }
-      }
+  const credential = getAzureCredentials();
+  const secrets = await fetchSecretsFromVault({ answers, vaultUrl, credential });
+  let envContent = '';
+  // Get all keys from config.PROPERTIES (ensures all keys are present)
+  const allConfigKeys = Object.keys(config.PROPERTIES || {});
+  for (const key of allConfigKeys) {
+    if (Object.keys(secrets).includes(key)) {
+      envContent += `${key}=${secrets[key]}\n`;
+    } else if (currentEnv[key] !== undefined) {
+      envContent += `${key}=${currentEnv[key]}\n`;
+    } else {
+      envContent += `${key}=\n`;
     }
   }
   try {
     await fsp.writeFile(envFilePath, envContent);
-    console.log(`${envFilePath} updated with selected changes.`);
+    console.log(`${envFilePath} updated with secrets from Azure Key Vault.`);
   } catch (err) {
     console.error(`\u001b[31mFailed to write env file: ${err.message}\u001b[0m`);
     throw err;

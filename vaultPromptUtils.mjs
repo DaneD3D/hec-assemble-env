@@ -56,7 +56,6 @@ export async function promptForVaultSecrets({ vaultUrl, credential }) {
   // Build a config-like object from Key Vault secrets (in-memory only, not exported)
   const dynamicConfig = { PROPERTIES: {}, GROUPINGS: {} };
   for (const [group, secretNames] of Object.entries(groupings)) {
-    // ...existing code for grouping and key shape analysis...
     let parsedSecrets = {};
     let keySets = {};
     for (const name of secretNames) {
@@ -69,7 +68,6 @@ export async function promptForVaultSecrets({ vaultUrl, credential }) {
         }
       } catch {}
     }
-    // ...existing code for majority key set and prompt message...
     const keySetCounts = {};
     const keySetMap = {};
     for (const name of Object.keys(keySets)) {

@@ -39,29 +39,49 @@ export async function promptForVaultSecretsWithGroups({ vaultUrl, credential }) 
   }
   const groupings = buildGroupingsFromTags(secrets);
   const answers = {};
-  // Prompt for each group
+  // Prompt for each group (skip group prompt if only one secret)
   for (const [group, secretNames] of Object.entries(groupings)) {
-    const { groupValue } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'groupValue',
-        message: `Enter value for group '${group}' (applies to: ${secretNames.join(', ')})`,
+    if (secretNames.length === 1) {
+      // Only one secret, prompt individually
+      const name = secretNames[0];
+      const isSensitive = /secret|key|token|password/i.test(name);
+      const { value } = await inquirer.prompt([
+        {
+          type: isSensitive ? 'password' : 'input',
+          name: 'value',
+          message: `Enter value for secret '${name}':`,
+          mask: isSensitive ? '*' : undefined
+        }
+      ]);
+      answers[name] = value;
+    } else {
+      // Use password prompt for secrets likely to be sensitive
+      const isSensitive = secretNames.some(name => /secret|key|token|password/i.test(name));
+      const { groupValue } = await inquirer.prompt([
+        {
+          type: isSensitive ? 'password' : 'input',
+          name: 'groupValue',
+          message: `Enter value for group '${group}' (applies to: ${secretNames.join(', ')})`,
+          mask: isSensitive ? '*' : undefined
+        }
+      ]);
+      for (const name of secretNames) {
+        answers[name] = groupValue;
       }
-    ]);
-    for (const name of secretNames) {
-      answers[name] = groupValue;
     }
   }
   // Prompt for ungrouped secrets
   const ungrouped = secrets.filter(s => !s.tags.group).map(s => s.name);
   if (ungrouped.length > 0) {
     const prompts = ungrouped.map(name => ({
-      type: 'input',
+      type: /secret|key|token|password/i.test(name) ? 'password' : 'input',
       name,
-      message: `Enter value for secret '${name}':`
+      message: `Enter value for secret '${name}':`,
+      mask: /secret|key|token|password/i.test(name) ? '*' : undefined
     }));
     const ungroupedAnswers = await inquirer.prompt(prompts);
     Object.assign(answers, ungroupedAnswers);
   }
+
   return answers;
 }

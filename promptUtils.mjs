@@ -50,6 +50,8 @@ export function buildUpdateChoices(queries) {
  */
 export async function promptForValue(item, queriesMap, currentEnv, config) {
   try {
+    // Accept custom prompt message as 5th argument
+    const customPromptMessage = arguments.length > 4 ? arguments[4] : undefined;
     if (item.startsWith('GROUP:')) {
       const groupName = item.replace('GROUP:', '');
       const groupQuery = queriesMap.get(item);
@@ -58,7 +60,7 @@ export async function promptForValue(item, queriesMap, currentEnv, config) {
         {
           type: 'list',
           name: 'groupValue',
-          message: `Choose value for group ${groupName}:`,
+          message: customPromptMessage || `Choose value for group ${groupName}:`,
           choices: groupQuery.values,
           default: currentEnv[groupQuery.keys[0]]
         }
@@ -72,14 +74,14 @@ export async function promptForValue(item, queriesMap, currentEnv, config) {
       let promptOptions = {
         type: 'input',
         name: 'newValue',
-        message: `Enter new value for ${item}:`,
+        message: customPromptMessage || `Enter new value for ${item}:`,
         default: currentEnv[item]
       };
       if (config.PROPERTIES && Array.isArray(config.PROPERTIES[item])) {
         promptOptions = {
           type: 'list',
           name: 'newValue',
-          message: `Choose new value for ${item}:`,
+          message: customPromptMessage || `Choose new value for ${item}:`,
           choices: config.PROPERTIES[item],
           default: currentEnv[item]
         };

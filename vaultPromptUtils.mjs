@@ -50,44 +50,34 @@ export async function promptForVaultSecrets({ vaultUrl, credential }) {
     return {};
   }
   const groupings = buildGroupingsFromTags(secrets);
-  const answers = {};
-  // Prompt for each group
+  let answers = {};
+  // Build dynamic queries for discovered secrets/groups
+  const { buildQueries, promptForValue } = await import('./promptUtils.mjs');
+  // Build a config-like object from Key Vault secrets (in-memory only, not exported)
+  const dynamicConfig = { PROPERTIES: {}, GROUPINGS: {} };
   for (const [group, secretNames] of Object.entries(groupings)) {
-    // For the group, check if any secret is a JSON object and build choices from the first JSON object found
-    let choices;
-    let secretValue;
-    let validGroupSecrets = [];
-    let invalidGroupSecrets = [];
-    // Find the intersection of keys for all JSON objects in the group
-    let keySets = [];
-    let jsonGroupSecrets = [];
+    // ...existing code for grouping and key shape analysis...
     let parsedSecrets = {};
+    let keySets = {};
     for (const name of secretNames) {
       try {
         const secret = await client.getSecret(name);
-        secretValue = secret.value;
-        const parsed = JSON.parse(secretValue);
+        const parsed = JSON.parse(secret.value);
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          keySets.push(new Set(Object.keys(parsed)));
-          jsonGroupSecrets.push(name);
           parsedSecrets[name] = parsed;
-        } else {
-          invalidGroupSecrets.push(name);
+          keySets[name] = Object.keys(parsed);
         }
-      } catch {
-        invalidGroupSecrets.push(name);
-      }
+      } catch {}
     }
-    // Find the most common key set among JSON secrets
+    // ...existing code for majority key set and prompt message...
     const keySetCounts = {};
     const keySetMap = {};
-    for (const name of jsonGroupSecrets) {
-      const keys = Object.keys(parsedSecrets[name] || {});
+    for (const name of Object.keys(keySets)) {
+      const keys = keySets[name];
       const keyStr = keys.sort().join('||');
       keySetCounts[keyStr] = (keySetCounts[keyStr] || 0) + 1;
       keySetMap[name] = keyStr;
     }
-    // Find the most common key set
     let majorityKeyStr = null;
     let maxCount = 0;
     for (const [keyStr, count] of Object.entries(keySetCounts)) {
@@ -97,116 +87,80 @@ export async function promptForVaultSecrets({ vaultUrl, credential }) {
       }
     }
     const majorityKeys = majorityKeyStr ? majorityKeyStr.split('||') : [];
-    // validGroupSecrets: only those whose key set matches the majority
-    validGroupSecrets = jsonGroupSecrets.filter(name => keySetMap[name] === majorityKeyStr);
-    // invalidGroupSecrets: all others
-    invalidGroupSecrets = secretNames.filter(name => !validGroupSecrets.includes(name));
-    // If no valid group secrets, treat all as invalid
-    if (majorityKeys.length === 0 || validGroupSecrets.length === 0) {
-      invalidGroupSecrets = [...secretNames];
-      validGroupSecrets = [];
-      choices = [];
-    } else {
-      choices = majorityKeys;
-    }
-    let selectedKey;
-    if (choices && choices.length > 0 && validGroupSecrets.length > 0) {
-      // Only prompt ONCE for the group, not for each secret
-      const { selected } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'selected',
-          message: `Choose value for group '${group}' (applies to: ${validGroupSecrets.join(', ')})`,
-          choices
-        }
-      ]);
-      selectedKey = selected;
-      // Apply the selected value to all valid group secrets
+    const validGroupSecrets = Object.keys(keySetMap).filter(name => keySetMap[name] === majorityKeyStr);
+    if (validGroupSecrets.length > 0 && majorityKeys.length > 0) {
+      dynamicConfig.GROUPINGS[group] = {
+        KEYS: validGroupSecrets,
+        VALUES: majorityKeys,
+        PROMPT_MESSAGE: `Choose value for group '${group}' (applies to: ${validGroupSecrets.join(', ')})`
+      };
       for (const name of validGroupSecrets) {
-        try {
-          answers[name] = parsedSecrets[name][selectedKey];
-        } catch {
-          answers[name] = '';
-        }
+        dynamicConfig.PROPERTIES[name] = majorityKeys;
       }
     }
-    // For each invalid/ejected secret, prompt individually for their own keys
+    // Eject secrets with different key sets
+    const invalidGroupSecrets = secretNames.filter(name => !validGroupSecrets.includes(name));
     for (const name of invalidGroupSecrets) {
-      let secretValue;
-      let choices;
-      let parsed;
       try {
         const secret = await client.getSecret(name);
-        secretValue = secret.value;
-        parsed = JSON.parse(secretValue);
+        const parsed = JSON.parse(secret.value);
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          choices = Object.keys(parsed);
+          dynamicConfig.PROPERTIES[name] = Object.keys(parsed);
+        } else {
+          dynamicConfig.PROPERTIES[name] = [];
         }
-      } catch {}
-      if (choices && choices.length > 0) {
-        const { selected } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'selected',
-            message: `Choose value for secret '${name}' (group: ${group})`,
-            choices
-          }
-        ]);
-        try {
-          answers[name] = parsed[selected];
-        } catch {
-          answers[name] = '';
-        }
-      } else {
-        const { value } = await inquirer.prompt([
-          {
-            type: 'input',
-            name: 'value',
-            message: `Enter value for secret '${name}' (group: ${group})`
-          }
-        ]);
-        answers[name] = value;
+      } catch {
+        dynamicConfig.PROPERTIES[name] = [];
       }
     }
   }
-  // Prompt for ungrouped secrets
+  // Add ungrouped secrets (in-memory only)
   const ungrouped = secrets.filter(s => !s.tags.group).map(s => s.name);
   for (const name of ungrouped) {
-    let secretValue;
-    let choices;
     try {
       const secret = await client.getSecret(name);
-      secretValue = secret.value;
-      const parsed = JSON.parse(secretValue);
+      const parsed = JSON.parse(secret.value);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        choices = Object.keys(parsed);
+        dynamicConfig.PROPERTIES[name] = Object.keys(parsed);
+      } else {
+        dynamicConfig.PROPERTIES[name] = [];
       }
-    } catch {}
-    if (choices && choices.length > 0) {
-      const { selected } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'selected',
-          message: `Choose value for secret '${name}':`,
-          choices
-        }
-      ]);
-      try {
-        const parsed = JSON.parse(secretValue);
-        answers[name] = parsed[selected];
-      } catch {
-        answers[name] = '';
-      }
-    } else {
-      const { value } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'value',
-          message: `Enter value for secret '${name}':`
-        }
-      ]);
-      answers[name] = value;
+    } catch {
+      dynamicConfig.PROPERTIES[name] = [];
     }
   }
-  return answers;
+  // Use shared prompt logic
+  const queriesMap = buildQueries(dynamicConfig);
+  // answers already declared above
+  for (const item of Array.from(queriesMap.keys())) {
+    // Use custom prompt message for group items if present
+    let promptMessage;
+    if (item.startsWith('GROUP:')) {
+      const groupName = item.replace('GROUP:', '');
+      const groupObj = dynamicConfig.GROUPINGS[groupName];
+      if (groupObj && groupObj.PROMPT_MESSAGE) {
+        promptMessage = groupObj.PROMPT_MESSAGE;
+      }
+    }
+    const result = await promptForValue(item, queriesMap, {}, dynamicConfig, promptMessage);
+    Object.assign(answers, result);
+  }
+
+  // Now, for each answer, fetch the actual value from Key Vault if it's a JSON secret
+  let finalAnswers = {};
+  for (const [name, selected] of Object.entries(answers)) {
+    try {
+      const secret = await client.getSecret(name);
+      const secretValue = secret.value;
+      const parsed = JSON.parse(secretValue);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && selected in parsed) {
+        finalAnswers[name] = parsed[selected];
+      } else {
+        finalAnswers[name] = selected;
+      }
+    } catch {
+      finalAnswers[name] = selected;
+    }
+  }
+  return finalAnswers;
 }

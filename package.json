@@ -9,7 +9,8 @@
     },
     "scripts": {
         "start": "node cli.mjs",
-        "build": "rollup -c"
+        "build": "rollup -c",
+        "watch": "rollup -c --watch"
     },
     "files": [
         "dist"

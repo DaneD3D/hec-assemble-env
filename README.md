@@ -1,4 +1,4 @@
-# hec-assemble-env
+# azure-key-env
 
 Azure credential and Key Vault utilities for Node.js. Includes:
 - Get Azure credentials
